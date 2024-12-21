@@ -1,0 +1,17 @@
+linters:
+  enable-all: true
+  disable:
+    - depguard
+    - godox
+    - exhaustruct
+    - lll
+    - gofumpt
+    - wsl
+    - gci
+linters-settings:
+  tagliatelle:
+    case:
+      rules:
+        json: snake
+run:
+  timeout: 1m
