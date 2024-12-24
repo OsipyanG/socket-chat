@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"client/internal/chatlog"
 	"client/internal/config"
 	"errors"
 	"fmt"
@@ -22,9 +23,22 @@ func main() {
 	}
 	defer conn.Close()
 
+	cl := chatlog.NewChatLogger("messages.log")
+
+	cache, err := cl.GetLastMessages(5)
+	if err != nil {
+		fmt.Print("Client cache is empty")
+	} else {
+		fmt.Println("\n________________Client cache________________")
+		for _, l := range cache {
+			fmt.Println(l)
+		}
+		fmt.Print("________________________________\n")
+
+	}
 	go handleExit(conn)
 
-	go readMessages(conn)
+	go readMessages(conn, cl)
 
 	writeMessages(conn)
 }
@@ -39,9 +53,8 @@ func handleExit(conn net.Conn) {
 	os.Exit(0)
 }
 
-func readMessages(conn net.Conn) {
+func readMessages(conn net.Conn, cl *chatlog.ChatLogger) {
 	reader := bufio.NewReader(conn)
-
 	for {
 		message, err := reader.ReadString('\n')
 		if err != nil {
