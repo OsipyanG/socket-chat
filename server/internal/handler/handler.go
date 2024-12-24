@@ -20,7 +20,6 @@ func HandleConnection(conn net.Conn, repo *repository.ClientRepository, broadcas
 		conn.Close()
 	}()
 
-	// Регистрируем клиента
 	nickname, err := registerNickname(conn, repo)
 	if err != nil {
 		slog.Warn("Failed to register nickname", slog.String("error", err.Error()))
@@ -30,10 +29,8 @@ func HandleConnection(conn net.Conn, repo *repository.ClientRepository, broadcas
 
 	clientChannel := broadcaster.Subscribe(conn)
 
-	// Отправляем историю чата
 	sendChatHistory(conn, chatLogger)
 
-	// Горутина для отправки сообщений клиенту
 	go func() {
 		for msg := range clientChannel {
 			_, err := conn.Write([]byte(msg + "\n"))
@@ -45,7 +42,6 @@ func HandleConnection(conn net.Conn, repo *repository.ClientRepository, broadcas
 		}
 	}()
 
-	// Чтение сообщений от клиента
 	reader := bufio.NewReader(conn)
 	for {
 		inputMessage, err := reader.ReadString('\n')
@@ -60,7 +56,6 @@ func HandleConnection(conn net.Conn, repo *repository.ClientRepository, broadcas
 			continue
 		}
 
-		// Обработка команды или сообщения
 		message := strings.TrimSpace(inputMessage)
 		if strings.HasPrefix(message, "/") {
 			if err := processCommand(message, conn, repo, broadcaster); err != nil {

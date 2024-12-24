@@ -3,7 +3,5 @@
     "port": "8080",
 
     "read_timeout": "5m",
-    "write_timeout": "10s",
-
-    "log_level": "info"
+    "write_timeout": "10s"
 }

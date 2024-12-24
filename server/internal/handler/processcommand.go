@@ -27,7 +27,7 @@ func processCommand(command string, conn net.Conn, repo *repository.ClientReposi
 		newNickname := strings.TrimSpace(parts[1])
 		repo.Remove(conn)
 		repo.Add(conn, newNickname)
-		broadcaster.Broadcast(fmt.Sprintf("User changed nickname to %s", newNickname), conn)
+		broadcaster.Broadcast(fmt.Sprintf("User changed nickname fron %s to %s", repo.GetNickname(conn), newNickname), conn)
 	case "/exit":
 		return errClientExit
 	default:

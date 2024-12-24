@@ -28,3 +28,9 @@ func (r *ClientRepository) Remove(conn net.Conn) {
 	defer r.mu.Unlock()
 	delete(r.clients, conn)
 }
+
+func (r *ClientRepository) GetNickname(conn net.Conn) string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.clients[conn]
+}

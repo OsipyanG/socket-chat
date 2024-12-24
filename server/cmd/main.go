@@ -23,12 +23,10 @@ func main() {
 	}
 	defer listener.Close()
 
-	// Инициализация модулей
 	repo := repository.NewClientRepository()
 	broadcaster := broadcaster.NewBroadcaster()
 	chatLogger := chatlog.NewChatLogger("messages.log")
 
-	// Обработка завершения работы
 	go func() {
 		sigChan := make(chan os.Signal, 1)
 		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
@@ -41,7 +39,6 @@ func main() {
 
 	slog.Info("Server started", slog.String("host", cfg.Host), slog.String("port", cfg.Port))
 
-	// Обработка подключений
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
