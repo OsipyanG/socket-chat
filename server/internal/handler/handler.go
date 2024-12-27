@@ -15,6 +15,9 @@ import (
 
 func HandleConnection(conn net.Conn, repo *repository.ClientRepository, broadcaster *broadcaster.Broadcaster, chatLogger *chatlog.ChatLogger) {
 	defer func() {
+		sendMessage := fmt.Sprintf("User %s join to the chat", repo.GetNickname(conn))
+		broadcaster.Broadcast(sendMessage, conn)
+
 		repo.Remove(conn)
 		broadcaster.Unsubscribe(conn)
 		conn.Close()
@@ -26,6 +29,8 @@ func HandleConnection(conn net.Conn, repo *repository.ClientRepository, broadcas
 
 		return
 	}
+	sendMessage := fmt.Sprintf("User %s join to the chat", nickname)
+	broadcaster.Broadcast(sendMessage, conn)
 
 	clientChannel := broadcaster.Subscribe(conn)
 

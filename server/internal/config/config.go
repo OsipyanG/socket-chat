@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-const configPath = "/Users/osipyang/Projects/web-tech/socket-chat/server/configs/server_config.json"
+const configPath = "configs/server_config.json"
 
 type Config struct {
 	Host string `json:"host"`
