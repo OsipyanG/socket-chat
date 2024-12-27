@@ -29,13 +29,14 @@ func main() {
 	if err != nil {
 		fmt.Print("Client cache is empty")
 	} else {
-		fmt.Println("\n________________Client cache________________")
+		fmt.Println("CLIENT CACHE")
+		fmt.Println("|" + strings.Repeat("-", 58) + "|")
 		for _, l := range cache {
 			fmt.Println(l)
 		}
-		fmt.Print("________________________________\n")
-
+		fmt.Println("|" + strings.Repeat("-", 58) + "|")
 	}
+
 	go handleExit(conn)
 
 	go readMessages(conn, cl)
@@ -66,8 +67,10 @@ func readMessages(conn net.Conn, cl *chatlog.ChatLogger) {
 
 			continue
 		}
+		message = strings.TrimSpace(message)
 
-		fmt.Printf("\r%s\n>> ", strings.TrimSpace(message))
+		cl.SaveMessage(message)
+		fmt.Printf("\r%s\n>> ", message)
 	}
 }
 
