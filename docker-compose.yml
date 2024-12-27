@@ -1,0 +1,29 @@
+services:
+  server:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    volumes:
+      - ./server/configs/server_config.json:/app/configs/server_config.json
+      - ./server/messages.log:/app/messages.log
+    networks:
+      - local_network
+
+  client:
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+    deploy:
+      replicas: 3
+    volumes:
+      - ./client/configs/client_config.json:/app/configs/client_config.json
+      - ./client/messages.log:/app/messages.log
+    networks:
+      - local_network
+    depends_on:
+      - server
+    tty: true
+
+networks:
+  local_network:
+    driver: bridge
