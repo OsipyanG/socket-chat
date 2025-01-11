@@ -5,11 +5,11 @@ import (
 	"net"
 	"os"
 	"os/signal"
-	"server/internal/broadcaster"
 	"server/internal/chatlog"
 	"server/internal/config"
 	"server/internal/handler"
 	"server/internal/repository"
+	"server/internal/sender"
 	"syscall"
 )
 
@@ -24,8 +24,10 @@ func main() {
 	defer listener.Close()
 
 	repo := repository.NewClientRepository()
-	broadcaster := broadcaster.NewBroadcaster()
+	sender := sender.NewSender()
 	chatLogger := chatlog.NewChatLogger("messages.log")
+
+	handler := handler.NewChatHandler(repo, sender, chatLogger)
 
 	go func() {
 		sigChan := make(chan os.Signal, 1)
@@ -33,7 +35,6 @@ func main() {
 		<-sigChan
 
 		slog.Info("Shutting down server...")
-		broadcaster.CloseAll()
 		os.Exit(0)
 	}()
 
@@ -43,11 +44,10 @@ func main() {
 		conn, err := listener.Accept()
 		if err != nil {
 			slog.Warn("Failed to accept connection", slog.String("error", err.Error()))
-
 			continue
 		}
 
 		slog.Info("New client connected", slog.String("address", conn.RemoteAddr().String()))
-		go handler.HandleConnection(conn, repo, broadcaster, chatLogger)
+		go handler.HandleConnection(conn)
 	}
 }

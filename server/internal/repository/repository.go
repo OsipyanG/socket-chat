@@ -19,18 +19,20 @@ func NewClientRepository() *ClientRepository {
 
 func (r *ClientRepository) Add(conn net.Conn, nickname string) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	r.clients[conn] = nickname
+	r.mu.Unlock()
 }
 
 func (r *ClientRepository) Remove(conn net.Conn) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	delete(r.clients, conn)
+	r.mu.Unlock()
 }
 
 func (r *ClientRepository) GetNickname(conn net.Conn) string {
 	r.mu.RLock()
-	defer r.mu.RUnlock()
-	return r.clients[conn]
+	nickname := r.clients[conn]
+	r.mu.RUnlock()
+
+	return nickname
 }

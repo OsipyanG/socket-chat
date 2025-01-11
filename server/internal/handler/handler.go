@@ -7,41 +7,94 @@ import (
 	"io"
 	"log/slog"
 	"net"
-	"server/internal/broadcaster"
 	"server/internal/chatlog"
 	"server/internal/repository"
+	"server/internal/sender"
 	"strings"
 )
 
-func HandleConnection(conn net.Conn, repo *repository.ClientRepository, broadcaster *broadcaster.Broadcaster, chatLogger *chatlog.ChatLogger) {
-	defer func() {
-		sendMessage := fmt.Sprintf("User %s join to the chat", repo.GetNickname(conn))
-		broadcaster.Broadcast(sendMessage, conn)
+type ChatHandler struct {
+	Repo       *repository.ClientRepository
+	Sender     *sender.Sender
+	ChatLogger *chatlog.ChatLogger
+}
 
-		repo.Remove(conn)
-		broadcaster.Unsubscribe(conn)
-		conn.Close()
-	}()
+func NewChatHandler(repo *repository.ClientRepository, sender *sender.Sender, chatLogger *chatlog.ChatLogger) *ChatHandler {
+	return &ChatHandler{
+		Repo:       repo,
+		Sender:     sender,
+		ChatLogger: chatLogger,
+	}
+}
 
-	nickname, err := registerNickname(conn, repo)
+func (h *ChatHandler) HandleConnection(conn net.Conn) {
+	defer h.cleanUpConnection(conn)
+
+	nickname, err := h.registerNickname(conn)
 	if err != nil {
 		slog.Warn("Failed to register nickname", slog.String("error", err.Error()))
-
 		return
 	}
-	sendMessage := fmt.Sprintf("User %s join to the chat", nickname)
-	broadcaster.Broadcast(sendMessage, conn)
 
-	clientChannel := broadcaster.Subscribe(conn)
+	h.sendUserJoinedMessage(nickname, conn)
+	h.sendChatHistory(conn)
 
-	sendChatHistory(conn, chatLogger)
+	clientChannel := h.Sender.AddSubscriber(conn)
 
+	h.listenForMessages(conn, nickname, clientChannel)
+}
+
+func (h *ChatHandler) cleanUpConnection(conn net.Conn) {
+	nickname := h.Repo.GetNickname(conn)
+	h.Repo.Remove(conn)
+	h.Sender.RemoveSubscriber(conn)
+	conn.Close() // Закрытие соединения полностью в ответственности обработчика
+
+	leaveMessage := fmt.Sprintf("User %s has left the chat", nickname)
+	h.Sender.Broadcast(leaveMessage, nil)
+}
+
+func (h *ChatHandler) registerNickname(conn net.Conn) (string, error) {
+	if err := h.Sender.SendDirect(conn, "Enter your nickname:"); err != nil {
+		return "", err
+	}
+
+	reader := bufio.NewReader(conn)
+	nickname, err := reader.ReadString('\n')
+	if err != nil {
+		return "", fmt.Errorf("error reading nickname: %w", err)
+	}
+
+	nickname = strings.TrimSpace(nickname)
+	if nickname == "" {
+		return "", errors.New("invalid nickname")
+	}
+
+	h.Repo.Add(conn, nickname)
+	return nickname, nil
+}
+
+func (h *ChatHandler) sendUserJoinedMessage(nickname string, conn net.Conn) {
+	message := fmt.Sprintf("User %s joined the chat", nickname)
+	h.Sender.Broadcast(message, conn)
+}
+
+func (h *ChatHandler) sendChatHistory(conn net.Conn) {
+	lastMessages, err := h.ChatLogger.GetLastMessages(10)
+	if err != nil {
+		slog.Warn("Failed to retrieve chat history", slog.String("error", err.Error()))
+		return
+	}
+
+	for _, msg := range lastMessages {
+		h.Sender.SendDirect(conn, msg)
+	}
+}
+
+func (h *ChatHandler) listenForMessages(conn net.Conn, nickname string, clientChannel <-chan string) {
 	go func() {
 		for msg := range clientChannel {
-			_, err := conn.Write([]byte(msg + "\n"))
-			if err != nil {
-				slog.Warn("Failed to send message to client", slog.String("nickname", nickname), slog.String("error", err.Error()))
-
+			if err := h.Sender.SendDirect(conn, msg); err != nil {
 				break
 			}
 		}
@@ -51,64 +104,43 @@ func HandleConnection(conn net.Conn, repo *repository.ClientRepository, broadcas
 	for {
 		inputMessage, err := reader.ReadString('\n')
 		if err != nil {
-			if errors.Is(err, io.EOF) {
-				slog.Info("Client disconnected", slog.String("nickname", nickname))
-
-				return
-			}
-			slog.Warn("Error reading message", slog.String("nickname", nickname), slog.String("error", err.Error()))
-
-			continue
+			h.handleReadError(err, nickname)
+			return
 		}
 
 		message := strings.TrimSpace(inputMessage)
 		if strings.HasPrefix(message, "/") {
-			if err := processCommand(message, conn, repo, broadcaster); err != nil {
-				if errors.Is(err, errClientExit) {
-					slog.Warn("Client sended /exit command")
-
-					return
-				}
-				slog.Warn("Failed to process command", slog.String("command", message), slog.String("nickname", nickname), slog.String("error", err.Error()))
-			}
+			h.handleCommand(message, conn, nickname)
 		} else {
-			sendMessage := fmt.Sprintf("(%s): %s", nickname, message)
-			broadcaster.Broadcast(sendMessage, conn)
-
-			if err := chatLogger.SaveMessage(sendMessage); err != nil {
-				slog.Warn("Failed to save message", slog.String("error", err.Error()))
-			}
+			h.broadcastMessage(nickname, message, conn)
 		}
 	}
 }
 
-func registerNickname(conn net.Conn, repo *repository.ClientRepository) (string, error) {
-	conn.Write([]byte("Enter your nickname: \n"))
-	reader := bufio.NewReader(conn)
-	nickname, err := reader.ReadString('\n')
-	if err != nil {
-		return "", err
+func (h *ChatHandler) handleReadError(err error, nickname string) {
+	if errors.Is(err, io.EOF) {
+		slog.Info("Client disconnected", slog.String("nickname", nickname))
+	} else {
+		slog.Warn("Error reading message", slog.String("nickname", nickname), slog.String("error", err.Error()))
 	}
-
-	nickname = strings.TrimSpace(nickname)
-	if nickname == "" {
-		return "", errors.New("invalid nickname")
-	}
-
-	repo.Add(conn, nickname)
-
-	return nickname, nil
 }
 
-func sendChatHistory(conn net.Conn, chatLogger *chatlog.ChatLogger) {
-	lastMessages, err := chatLogger.GetLastMessages(10)
+func (h *ChatHandler) handleCommand(command string, conn net.Conn, nickname string) {
+	err := h.ProcessCommand(command, conn)
 	if err != nil {
-		slog.Warn("Failed to send chat history", slog.String("error", err.Error()))
-
-		return
+		if errors.Is(err, errClientExit) {
+			slog.Info("Client exited the chat", slog.String("nickname", nickname))
+		} else {
+			slog.Warn("Failed to process command", slog.String("command", command), slog.String("nickname", nickname), slog.String("error", err.Error()))
+		}
 	}
+}
 
-	for _, msg := range lastMessages {
-		conn.Write([]byte(msg + "\n"))
+func (h *ChatHandler) broadcastMessage(nickname, message string, senderConn net.Conn) {
+	formattedMessage := fmt.Sprintf("(%s): %s", nickname, message)
+	h.Sender.Broadcast(formattedMessage, senderConn)
+
+	if err := h.ChatLogger.SaveMessage(formattedMessage); err != nil {
+		slog.Warn("Failed to save message", slog.String("error", err.Error()))
 	}
 }
