@@ -1,27 +1,31 @@
 package sender
 
 import (
+	"fmt"
 	"log/slog"
 	"net"
 	"sync"
+	"time"
 )
 
-const bufferSize = 15
+const (
+	bufferSize  = 15
+	sendTimeout = 5 * time.Second
+	maxRetries  = 3
+)
 
 type Sender struct {
-	mu          *sync.RWMutex
+	mu          sync.RWMutex
 	subscribers map[net.Conn]chan string
 }
 
 func NewSender() *Sender {
 	return &Sender{
-		mu:          &sync.RWMutex{},
 		subscribers: make(map[net.Conn]chan string),
 	}
 }
 
-// AddSubscriber добавляет клиента в список подписчиков
-func (s *Sender) AddSubscriber(conn net.Conn) chan string {
+func (s *Sender) AddSub(conn net.Conn) {
 	ch := make(chan string, bufferSize)
 
 	s.mu.Lock()
@@ -29,12 +33,9 @@ func (s *Sender) AddSubscriber(conn net.Conn) chan string {
 	s.mu.Unlock()
 
 	go s.startSending(conn, ch)
-
-	return ch
 }
 
-// RemoveSubscriber удаляет клиента из списка подписчиков (не закрывает conn)
-func (s *Sender) RemoveSubscriber(conn net.Conn) {
+func (s *Sender) RemoveSub(conn net.Conn) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -44,7 +45,6 @@ func (s *Sender) RemoveSubscriber(conn net.Conn) {
 	}
 }
 
-// Broadcast отправляет сообщение всем подписчикам, кроме отправителя
 func (s *Sender) Broadcast(message string, senderConn net.Conn) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -53,36 +53,57 @@ func (s *Sender) Broadcast(message string, senderConn net.Conn) {
 		if conn == senderConn {
 			continue
 		}
-		select {
-		case ch <- message:
-		default:
-			slog.Warn("Client is not ready to receive messages", "addr", conn.RemoteAddr())
+
+		if err := s.sendWithRetries(conn, ch, message); err != nil {
+			slog.Warn("Failed to broadcast message", "addr", conn.RemoteAddr(), "error", err.Error())
 		}
 	}
 }
 
-// SendDirect отправляет сообщение напрямую конкретному клиенту
 func (s *Sender) SendDirect(conn net.Conn, message string) error {
 	s.mu.RLock()
-	defer s.mu.RUnlock()
+	ch, exists := s.subscribers[conn]
+	s.mu.RUnlock()
 
-	if _, exists := s.subscribers[conn]; !exists {
-		return nil // Неактивный клиент
+	if !exists {
+		return fmt.Errorf("connection not found in subscribers")
 	}
 
-	_, err := conn.Write([]byte(message + "\n"))
-	if err != nil {
-		slog.Warn("Failed to send direct message", "addr", conn.RemoteAddr(), "error", err.Error())
-	}
-	return err
+	return s.sendWithRetries(conn, ch, message)
 }
 
-// startSending запускает горутину для отправки сообщений клиенту
 func (s *Sender) startSending(conn net.Conn, ch <-chan string) {
 	for msg := range ch {
 		if _, err := conn.Write([]byte(msg + "\n")); err != nil {
 			slog.Warn("Failed to send message to client", "addr", conn.RemoteAddr(), "error", err.Error())
 			break
 		}
+	}
+}
+
+func (s *Sender) sendWithRetries(conn net.Conn, ch chan string, message string) error {
+	var lastErr error
+	ticker := time.NewTicker(sendTimeout)
+
+	for i := range maxRetries {
+		select {
+		case ch <- message:
+			return nil
+		case <-ticker.C:
+			lastErr = fmt.Errorf("timeout while sending message")
+			slog.Warn("Retrying to send message", "addr", conn.RemoteAddr(), "retry", i+1, "message", message)
+		}
+	}
+
+	return fmt.Errorf("failed to send message after %d retries: %w", maxRetries, lastErr)
+}
+
+func (s *Sender) CloseAll() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for conn, ch := range s.subscribers {
+		close(ch)
+		delete(s.subscribers, conn)
 	}
 }

@@ -8,6 +8,7 @@ linters:
     - gofumpt
     - wsl
     - gci
+    - nlreturn
 linters-settings:
   tagliatelle:
     case:

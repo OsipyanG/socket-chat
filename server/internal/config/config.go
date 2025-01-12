@@ -2,7 +2,7 @@ package config
 
 import (
 	"encoding/json"
-	"log"
+	"fmt"
 	"os"
 	"time"
 )
@@ -20,28 +20,28 @@ type Config struct {
 	WriteTimeoutDuration time.Duration `json:"-"`
 }
 
-func MustLoad() Config {
+func Load() (*Config, error) {
 	cfg := Config{}
 
 	fileBytes, err := os.ReadFile(configPath)
 	if err != nil {
-		log.Fatalf("cannot open config file: %v", err)
+		return nil, fmt.Errorf("cannot open config file: %w", err)
 	}
 
 	err = json.Unmarshal(fileBytes, &cfg)
 	if err != nil {
-		log.Fatalf("cannot unmarshal config: %v", err)
+		return nil, fmt.Errorf("cannot unmarshal config: %w", err)
 	}
 
 	cfg.ReadTimeoutDuration, err = time.ParseDuration(cfg.ReadTimeout)
 	if err != nil {
-		log.Fatalf("cannot parse ReadTimeout, err=%s, ReadTimeout=%s", err.Error(), cfg.ReadTimeout)
+		return nil, fmt.Errorf("cannot parse ReadTimeout, err=%w, ReadTimeout=%s", err, cfg.ReadTimeout)
 	}
 
 	cfg.WriteTimeoutDuration, err = time.ParseDuration(cfg.WriteTimeout)
 	if err != nil {
-		log.Fatalf("cannot parse WriteTimeout, err=%s, WriteTimeout=%s", err.Error(), cfg.WriteTimeout)
+		return nil, fmt.Errorf("cannot parse WriteTimeout, err=%w, WriteTimeout=%s", err, cfg.WriteTimeout)
 	}
 
-	return cfg
+	return &cfg, nil
 }

@@ -1,53 +1,35 @@
 package main
 
 import (
+	"context"
 	"log/slog"
-	"net"
 	"os"
 	"os/signal"
-	"server/internal/chatlog"
+	"server/internal/app"
 	"server/internal/config"
-	"server/internal/handler"
-	"server/internal/repository"
-	"server/internal/sender"
 	"syscall"
 )
 
 func main() {
-	cfg := config.MustLoad()
-
-	listener, err := net.Listen("tcp", net.JoinHostPort(cfg.Host, cfg.Port))
+	cfg, err := config.Load()
 	if err != nil {
-		slog.Error("Failed to start server", slog.String("error", err.Error()))
+		slog.Error("Failed to load config", slog.String("error", err.Error()))
+	}
+
+	app, err := app.NewApp(cfg)
+	if err != nil {
+		slog.Error("Failed to initialize application", slog.String("error", err.Error()))
 		os.Exit(1)
 	}
-	defer listener.Close()
 
-	repo := repository.NewClientRepository()
-	sender := sender.NewSender()
-	chatLogger := chatlog.NewChatLogger("messages.log")
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
 
-	handler := handler.NewChatHandler(repo, sender, chatLogger)
+	go app.Start(ctx)
 
-	go func() {
-		sigChan := make(chan os.Signal, 1)
-		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-		<-sigChan
+	<-ctx.Done()
 
-		slog.Info("Shutting down server...")
-		os.Exit(0)
-	}()
-
-	slog.Info("Server started", slog.String("host", cfg.Host), slog.String("port", cfg.Port))
-
-	for {
-		conn, err := listener.Accept()
-		if err != nil {
-			slog.Warn("Failed to accept connection", slog.String("error", err.Error()))
-			continue
-		}
-
-		slog.Info("New client connected", slog.String("address", conn.RemoteAddr().String()))
-		go handler.HandleConnection(conn)
-	}
+	slog.Info("Shutting down server...")
+	app.Stop()
+	slog.Info("Server gracefully stopped")
 }

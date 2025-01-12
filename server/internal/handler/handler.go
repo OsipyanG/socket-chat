@@ -13,6 +13,10 @@ import (
 	"strings"
 )
 
+const (
+	countOfCacheMessages = 10
+)
+
 type ChatHandler struct {
 	Repo       *repository.ClientRepository
 	Sender     *sender.Sender
@@ -30,25 +34,27 @@ func NewChatHandler(repo *repository.ClientRepository, sender *sender.Sender, ch
 func (h *ChatHandler) HandleConnection(conn net.Conn) {
 	defer h.cleanUpConnection(conn)
 
+	h.Sender.AddSub(conn)
+
 	nickname, err := h.registerNickname(conn)
 	if err != nil {
 		slog.Warn("Failed to register nickname", slog.String("error", err.Error()))
 		return
 	}
 
-	h.sendUserJoinedMessage(nickname, conn)
+	h.Repo.Add(conn, nickname)
+
+	h.sendUserJoinedMessage(conn)
 	h.sendChatHistory(conn)
 
-	clientChannel := h.Sender.AddSubscriber(conn)
-
-	h.listenForMessages(conn, nickname, clientChannel)
+	h.listenForMessages(conn)
 }
 
 func (h *ChatHandler) cleanUpConnection(conn net.Conn) {
 	nickname := h.Repo.GetNickname(conn)
 	h.Repo.Remove(conn)
-	h.Sender.RemoveSubscriber(conn)
-	conn.Close() // Закрытие соединения полностью в ответственности обработчика
+	h.Sender.RemoveSub(conn)
+	conn.Close()
 
 	leaveMessage := fmt.Sprintf("User %s has left the chat", nickname)
 	h.Sender.Broadcast(leaveMessage, nil)
@@ -70,17 +76,17 @@ func (h *ChatHandler) registerNickname(conn net.Conn) (string, error) {
 		return "", errors.New("invalid nickname")
 	}
 
-	h.Repo.Add(conn, nickname)
 	return nickname, nil
 }
 
-func (h *ChatHandler) sendUserJoinedMessage(nickname string, conn net.Conn) {
+func (h *ChatHandler) sendUserJoinedMessage(conn net.Conn) {
+	nickname := h.Repo.GetNickname(conn)
 	message := fmt.Sprintf("User %s joined the chat", nickname)
 	h.Sender.Broadcast(message, conn)
 }
 
 func (h *ChatHandler) sendChatHistory(conn net.Conn) {
-	lastMessages, err := h.ChatLogger.GetLastMessages(10)
+	lastMessages, err := h.ChatLogger.GetLastMessages(countOfCacheMessages)
 	if err != nil {
 		slog.Warn("Failed to retrieve chat history", slog.String("error", err.Error()))
 		return
@@ -91,17 +97,10 @@ func (h *ChatHandler) sendChatHistory(conn net.Conn) {
 	}
 }
 
-func (h *ChatHandler) listenForMessages(conn net.Conn, nickname string, clientChannel <-chan string) {
-	go func() {
-		for msg := range clientChannel {
-			if err := h.Sender.SendDirect(conn, msg); err != nil {
-				break
-			}
-		}
-	}()
-
+func (h *ChatHandler) listenForMessages(conn net.Conn) {
 	reader := bufio.NewReader(conn)
 	for {
+		nickname := h.Repo.GetNickname(conn)
 		inputMessage, err := reader.ReadString('\n')
 		if err != nil {
 			h.handleReadError(err, nickname)
@@ -118,7 +117,7 @@ func (h *ChatHandler) listenForMessages(conn net.Conn, nickname string, clientCh
 }
 
 func (h *ChatHandler) handleReadError(err error, nickname string) {
-	if errors.Is(err, io.EOF) {
+	if errors.Is(err, io.EOF) || errors.Is(err, net.ErrClosed) {
 		slog.Info("Client disconnected", slog.String("nickname", nickname))
 	} else {
 		slog.Warn("Error reading message", slog.String("nickname", nickname), slog.String("error", err.Error()))
@@ -128,11 +127,7 @@ func (h *ChatHandler) handleReadError(err error, nickname string) {
 func (h *ChatHandler) handleCommand(command string, conn net.Conn, nickname string) {
 	err := h.ProcessCommand(command, conn)
 	if err != nil {
-		if errors.Is(err, errClientExit) {
-			slog.Info("Client exited the chat", slog.String("nickname", nickname))
-		} else {
-			slog.Warn("Failed to process command", slog.String("command", command), slog.String("nickname", nickname), slog.String("error", err.Error()))
-		}
+		slog.Warn("Failed to process command", slog.String("command", command), slog.String("nickname", nickname), slog.String("error", err.Error()))
 	}
 }
 

@@ -26,6 +26,7 @@ func (r *ClientRepository) Add(conn net.Conn, nickname string) {
 func (r *ClientRepository) Remove(conn net.Conn) {
 	r.mu.Lock()
 	delete(r.clients, conn)
+	conn.Close()
 	r.mu.Unlock()
 }
 
@@ -35,4 +36,14 @@ func (r *ClientRepository) GetNickname(conn net.Conn) string {
 	r.mu.RUnlock()
 
 	return nickname
+}
+
+func (r *ClientRepository) CloseAllConnections() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	for conn := range r.clients {
+		delete(r.clients, conn)
+		conn.Close()
+	}
 }
