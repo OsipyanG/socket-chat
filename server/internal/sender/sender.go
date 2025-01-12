@@ -1,6 +1,7 @@
 package sender
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -39,6 +40,10 @@ func (s *Sender) RemoveSub(conn net.Conn) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	s.closeSubscriber(conn)
+}
+
+func (s *Sender) closeSubscriber(conn net.Conn) {
 	if ch, ok := s.subscribers[conn]; ok {
 		close(ch)
 		delete(s.subscribers, conn)
@@ -50,12 +55,8 @@ func (s *Sender) Broadcast(message string, senderConn net.Conn) {
 	defer s.mu.RUnlock()
 
 	for conn, ch := range s.subscribers {
-		if conn == senderConn {
-			continue
-		}
-
-		if err := s.sendWithRetries(conn, ch, message); err != nil {
-			slog.Warn("Failed to broadcast message", "addr", conn.RemoteAddr(), "error", err.Error())
+		if conn != senderConn {
+			s.attemptSend(conn, ch, message)
 		}
 	}
 }
@@ -66,30 +67,31 @@ func (s *Sender) SendDirect(conn net.Conn, message string) error {
 	s.mu.RUnlock()
 
 	if !exists {
-		return fmt.Errorf("connection not found in subscribers")
+		return errors.New("connection not found in subscribers")
 	}
 
-	return s.sendWithRetries(conn, ch, message)
+	return s.attemptSend(conn, ch, message)
 }
 
 func (s *Sender) startSending(conn net.Conn, ch <-chan string) {
 	for msg := range ch {
 		if _, err := conn.Write([]byte(msg + "\n")); err != nil {
 			slog.Warn("Failed to send message to client", "addr", conn.RemoteAddr(), "error", err.Error())
-			break
+			return // Exit on failure to avoid resource leaks
 		}
 	}
 }
 
-func (s *Sender) sendWithRetries(conn net.Conn, ch chan string, message string) error {
+func (s *Sender) attemptSend(conn net.Conn, ch chan string, message string) error {
 	var lastErr error
-	ticker := time.NewTicker(sendTimeout)
 
-	for i := range maxRetries {
+	for i := 0; i < maxRetries; i++ {
+		timer := time.NewTimer(sendTimeout)
+
 		select {
 		case ch <- message:
 			return nil
-		case <-ticker.C:
+		case <-timer.C:
 			lastErr = fmt.Errorf("timeout while sending message")
 			slog.Warn("Retrying to send message", "addr", conn.RemoteAddr(), "retry", i+1, "message", message)
 		}
@@ -102,8 +104,7 @@ func (s *Sender) CloseAll() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	for conn, ch := range s.subscribers {
-		close(ch)
-		delete(s.subscribers, conn)
+	for conn := range s.subscribers {
+		s.closeSubscriber(conn)
 	}
 }

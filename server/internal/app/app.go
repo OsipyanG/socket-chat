@@ -6,9 +6,9 @@ import (
 	"log/slog"
 	"net"
 	"server/internal/chatlog"
+	"server/internal/clients"
 	"server/internal/config"
 	"server/internal/handler"
-	"server/internal/repository"
 	"server/internal/sender"
 )
 
@@ -23,14 +23,14 @@ func NewApp(cfg *config.Config) (*App, error) {
 		return nil, err
 	}
 
-	repo := repository.NewClientRepository()
+	registry := clients.NewConnectionRegistry()
 	sender := sender.NewSender()
 	chatLogger, err := chatlog.NewChatLogger("messages.log")
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize chat logger: %w", err)
 	}
 
-	chatHandler := handler.NewChatHandler(repo, sender, chatLogger)
+	chatHandler := handler.NewChatHandler(registry, sender, chatLogger)
 
 	return &App{
 		listener: listener,
@@ -70,6 +70,6 @@ func (app *App) Stop() {
 		slog.Warn("Failed to close ChatLogger", slog.String("error", err.Error()))
 	}
 
-	app.handler.Repo.CloseAllConnections()
+	app.handler.Registry.TerminateAll()
 	app.handler.Sender.CloseAll()
 }

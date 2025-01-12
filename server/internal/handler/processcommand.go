@@ -32,9 +32,8 @@ func (h *ChatHandler) handleNickCommand(parts []string, conn net.Conn) error {
 	}
 
 	newNickname := strings.TrimSpace(parts[1])
-	oldNickname := h.Repo.GetNickname(conn)
-
-	h.Repo.Add(conn, newNickname)
+	oldNickname := h.Registry.LookupNickname(conn)
+	h.Registry.Register(conn, newNickname)
 
 	message := fmt.Sprintf("User changed nickname from %s to %s", oldNickname, newNickname)
 	h.Sender.Broadcast(message, conn)

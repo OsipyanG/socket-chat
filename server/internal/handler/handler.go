@@ -8,7 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"server/internal/chatlog"
-	"server/internal/repository"
+	"server/internal/clients"
 	"server/internal/sender"
 	"strings"
 )
@@ -18,14 +18,14 @@ const (
 )
 
 type ChatHandler struct {
-	Repo       *repository.ClientRepository
+	Registry   *clients.ConnectionRegistry
 	Sender     *sender.Sender
 	ChatLogger *chatlog.ChatLogger
 }
 
-func NewChatHandler(repo *repository.ClientRepository, sender *sender.Sender, chatLogger *chatlog.ChatLogger) *ChatHandler {
+func NewChatHandler(repo *clients.ConnectionRegistry, sender *sender.Sender, chatLogger *chatlog.ChatLogger) *ChatHandler {
 	return &ChatHandler{
-		Repo:       repo,
+		Registry:   repo,
 		Sender:     sender,
 		ChatLogger: chatLogger,
 	}
@@ -42,7 +42,7 @@ func (h *ChatHandler) HandleConnection(conn net.Conn) {
 		return
 	}
 
-	h.Repo.Add(conn, nickname)
+	h.Registry.Register(conn, nickname)
 
 	h.sendUserJoinedMessage(conn)
 	h.sendChatHistory(conn)
@@ -51,10 +51,9 @@ func (h *ChatHandler) HandleConnection(conn net.Conn) {
 }
 
 func (h *ChatHandler) cleanUpConnection(conn net.Conn) {
-	nickname := h.Repo.GetNickname(conn)
-	h.Repo.Remove(conn)
+	nickname := h.Registry.LookupNickname(conn)
+	h.Registry.Unregister(conn)
 	h.Sender.RemoveSub(conn)
-	conn.Close()
 
 	leaveMessage := fmt.Sprintf("User %s has left the chat", nickname)
 	h.Sender.Broadcast(leaveMessage, nil)
@@ -80,7 +79,7 @@ func (h *ChatHandler) registerNickname(conn net.Conn) (string, error) {
 }
 
 func (h *ChatHandler) sendUserJoinedMessage(conn net.Conn) {
-	nickname := h.Repo.GetNickname(conn)
+	nickname := h.Registry.LookupNickname(conn)
 	message := fmt.Sprintf("User %s joined the chat", nickname)
 	h.Sender.Broadcast(message, conn)
 }
@@ -100,7 +99,7 @@ func (h *ChatHandler) sendChatHistory(conn net.Conn) {
 func (h *ChatHandler) listenForMessages(conn net.Conn) {
 	reader := bufio.NewReader(conn)
 	for {
-		nickname := h.Repo.GetNickname(conn)
+		nickname := h.Registry.LookupNickname(conn)
 		inputMessage, err := reader.ReadString('\n')
 		if err != nil {
 			h.handleReadError(err, nickname)
@@ -109,7 +108,7 @@ func (h *ChatHandler) listenForMessages(conn net.Conn) {
 
 		message := strings.TrimSpace(inputMessage)
 		if strings.HasPrefix(message, "/") {
-			h.handleCommand(message, conn, nickname)
+			h.handleCommand(conn, message)
 		} else {
 			h.broadcastMessage(nickname, message, conn)
 		}
@@ -124,7 +123,8 @@ func (h *ChatHandler) handleReadError(err error, nickname string) {
 	}
 }
 
-func (h *ChatHandler) handleCommand(command string, conn net.Conn, nickname string) {
+func (h *ChatHandler) handleCommand(conn net.Conn, command string) {
+	nickname := h.Registry.LookupNickname(conn)
 	err := h.ProcessCommand(command, conn)
 	if err != nil {
 		slog.Warn("Failed to process command", slog.String("command", command), slog.String("nickname", nickname), slog.String("error", err.Error()))
