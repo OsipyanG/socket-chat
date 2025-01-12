@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"log/slog"
-	"os"
 	"os/signal"
 	"server/internal/app"
 	"server/internal/config"
@@ -14,12 +13,13 @@ func main() {
 	cfg, err := config.Load()
 	if err != nil {
 		slog.Error("Failed to load config", slog.String("error", err.Error()))
+		return
 	}
 
 	app, err := app.NewApp(cfg)
 	if err != nil {
 		slog.Error("Failed to initialize application", slog.String("error", err.Error()))
-		os.Exit(1)
+		return
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
